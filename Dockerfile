@@ -54,4 +54,4 @@ CMD ["pnpm", "start"]
 
 # Commandes utiles:
 # docker build -t santu-hub-cicd:latest .
-# docker run -p 3000:3000 santu-hub-cicd:latest
+# docker run -p 3000:3000 -v /proc:/host/proc:ro -v /sys:/host/sys:ro -v /etc:/host/etc:ro santu-hub-cicd:latest

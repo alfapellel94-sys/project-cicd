@@ -102,8 +102,26 @@ L'application utilise Webpack au lieu de Turbopack pour éviter les problèmes d
 Cette application peut être déployée sur n'importe quelle plateforme supportant Next.js :
 
 - **Vercel** : Déploiement automatique depuis Git
-- **Docker** : Créez un Dockerfile pour containeriser l'application
+- **Docker** : Containerisation avec accès aux informations de l'hôte
 - **Autres plateformes** : Netlify, AWS, Azure, etc.
+
+### Déploiement Docker avec accès aux informations de l'hôte
+
+Pour afficher les informations système de l'hôte (et non du conteneur), il faut monter les volumes suivants :
+
+```bash
+# Construire l'image
+docker build -t santu-hub-cicd:latest .
+
+# Lancer le conteneur avec les volumes montés
+docker run -p 3000:3000 \
+  -v /proc:/host/proc:ro \
+  -v /sys:/host/sys:ro \
+  -v /etc:/host/etc:ro \
+  santu-hub-cicd:latest
+```
+
+**Important** : Les volumes `/proc`, `/sys` et `/etc` doivent être montés en lecture seule (`:ro`) pour que l'application puisse lire les informations système de l'hôte plutôt que celles du conteneur.
 
 ### Exemple de déploiement Vercel
 
