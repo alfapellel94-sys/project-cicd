@@ -413,6 +413,7 @@ function getHostIP(): string {
       if (fs.existsSync("/proc/1/root")) {
         // Avec --pid host, on peut exécuter hostname -i dans l'espace de noms de l'hôte
         const hostnameIP = execSync("hostname -i 2>/dev/null", { encoding: "utf-8", timeout: 2000 }).trim();
+        console.log(`hostname -i result: "${hostnameIP}"`);
         if (hostnameIP && hostnameIP.length > 0 && hostnameIP !== "127.0.0.1" && !hostnameIP.includes("::1")) {
           // hostname -i peut retourner plusieurs IPs, prendre la première
           const firstIP = hostnameIP.split(/\s+/)[0];
@@ -422,12 +423,34 @@ function getHostIP(): string {
           }
         }
       }
-    } catch (e) {
+    } catch (e: any) {
+      console.log(`hostname -i failed: ${e.message}`);
       // hostname -i n'est pas disponible ou a échoué, continuer avec les autres méthodes
     }
     
+    // Méthode 0.5: Essayer de lire depuis /sys/class/net pour trouver les interfaces et leurs IPs
+    try {
+      const netDir = "/proc/1/root/sys/class/net";
+      if (fs.existsSync(netDir)) {
+        const interfaces = fs.readdirSync(netDir);
+        for (const iface of interfaces) {
+          if (iface === "lo") continue; // Ignorer loopback
+          
+          // Chercher l'adresse IP dans /sys/class/net/iface/address (MAC) puis chercher l'IP
+          // Ou mieux: chercher dans /proc/net/route ou /proc/net/fib_trie pour cette interface
+          const addrFile = `${netDir}/${iface}/address`;
+          if (fs.existsSync(addrFile)) {
+            // Cette interface existe, chercher son IP
+            // On va utiliser une autre méthode pour trouver l'IP de cette interface
+          }
+        }
+      }
+    } catch (e: any) {
+      console.log(`Reading /sys/class/net failed: ${e.message}`);
+    }
+    
     // Méthode 1: Lire depuis /proc/net/fib_trie (contient toutes les IPs locales)
-    const fibTrie = readHostFile("/proc/net/fib_trie", () => "");
+    let fibTrie = readHostFile("/proc/net/fib_trie", () => "");
     if (fibTrie && fibTrie.length > 0) {
       // Parser fib_trie pour trouver les IPs locales
       // Chercher les lignes avec "LOCAL" qui indiquent les IPs locales
@@ -472,22 +495,58 @@ function getHostIP(): string {
       }
     }
     
-    // Méthode 2: Lire depuis /proc/net/route pour trouver l'interface principale
+    // Méthode 2: Lire depuis /proc/net/route pour trouver l'interface principale puis son IP
     const route = readHostFile("/proc/net/route", () => "");
     if (route && route.length > 0) {
       const lines = route.split("\n");
       // Chercher la première interface non-loopback avec une route par défaut
       for (let i = 1; i < lines.length; i++) {
         const parts = lines[i].trim().split(/\s+/);
-        if (parts.length >= 2) {
+        if (parts.length >= 4) {
           const iface = parts[0];
           const dest = parts[1];
+          const sourceHex = parts[2]; // IP source en hexadécimal
           
           // Ignorer loopback et chercher la route par défaut
           if (iface && iface !== "lo" && dest === "00000000") {
-            // Lire l'IP de cette interface depuis /sys/class/net/iface/address (MAC) puis chercher l'IP
-            // Ou utiliser une autre méthode pour obtenir l'IP de l'interface
-            // Pour l'instant, on continue avec la méthode suivante
+            console.log(`Found default route interface: ${iface}, source hex: ${sourceHex}`);
+            
+            // Convertir l'IP source de hexadécimal à décimal
+            if (sourceHex && sourceHex.length === 8) {
+              try {
+                const ip = [
+                  parseInt(sourceHex.substring(6, 8), 16),
+                  parseInt(sourceHex.substring(4, 6), 16),
+                  parseInt(sourceHex.substring(2, 4), 16),
+                  parseInt(sourceHex.substring(0, 2), 16),
+                ].join(".");
+                
+                if (ip !== "0.0.0.0" && ip !== "127.0.0.1" && !ip.startsWith("172.17.") && !ip.startsWith("172.18.") && !ip.startsWith("172.19.")) {
+                  console.log(`✓ IP depuis route (source): ${ip}`);
+                  return ip;
+                }
+              } catch (e) {
+                console.log(`Error parsing source IP: ${e}`);
+              }
+            }
+            
+            // Relire fib_trie si nécessaire
+            if (!fibTrie || fibTrie.length === 0) {
+              fibTrie = readHostFile("/proc/net/fib_trie", () => "");
+            }
+            
+            // Essayer de trouver l'IP de cette interface dans /proc/net/fib_trie
+            if (fibTrie && fibTrie.length > 0) {
+              const ifacePattern = new RegExp(`${iface}.*?(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3})`, 'i');
+              const match = fibTrie.match(ifacePattern);
+              if (match && match[1]) {
+                const ip = match[1];
+                if (ip !== "127.0.0.1" && ip !== "0.0.0.0" && !ip.startsWith("172.17.") && !ip.startsWith("172.18.") && !ip.startsWith("172.19.")) {
+                  console.log(`✓ IP depuis route + fib_trie: ${ip}`);
+                  return ip;
+                }
+              }
+            }
           }
         }
       }
@@ -516,33 +575,32 @@ function getHostIP(): string {
   
   // Fallback: utiliser l'IP du conteneur (si on ne peut pas accéder à l'hôte)
   // Mais filtrer les IPs Docker
+  console.log("Trying fallback: os.networkInterfaces()");
   const interfaces = os.networkInterfaces();
   for (const name of Object.keys(interfaces || {})) {
     const iface = interfaces![name];
     if (iface) {
       for (const addr of iface) {
-        if (addr.family === "IPv4" && !addr.internal && 
-            !addr.address.startsWith("172.17.") && 
-            !addr.address.startsWith("172.18.") && 
-            !addr.address.startsWith("172.19.") &&
-            !addr.address.startsWith("172.20.") &&
-            !addr.address.startsWith("172.21.") &&
-            !addr.address.startsWith("172.22.") &&
-            !addr.address.startsWith("172.23.") &&
-            !addr.address.startsWith("172.24.") &&
-            !addr.address.startsWith("172.25.") &&
-            !addr.address.startsWith("172.26.") &&
-            !addr.address.startsWith("172.27.") &&
-            !addr.address.startsWith("172.28.") &&
-            !addr.address.startsWith("172.29.") &&
-            !addr.address.startsWith("172.30.") &&
-            !addr.address.startsWith("172.31.")) {
-          return addr.address;
+        console.log(`Checking interface ${name}: ${addr.address} (internal: ${addr.internal}, family: ${addr.family})`);
+        if (addr.family === "IPv4" && !addr.internal) {
+          // Filtrer les IPs Docker (172.16.0.0/12)
+          const ipParts = addr.address.split(".");
+          const firstOctet = parseInt(ipParts[0]);
+          const secondOctet = parseInt(ipParts[1]);
+          
+          // IPs Docker: 172.16.0.0/12 (172.16.0.0 - 172.31.255.255)
+          const isDockerIP = firstOctet === 172 && secondOctet >= 16 && secondOctet <= 31;
+          
+          if (!isDockerIP && addr.address !== "127.0.0.1") {
+            console.log(`✓ IP depuis fallback (os.networkInterfaces): ${addr.address}`);
+            return addr.address;
+          }
         }
       }
     }
   }
   
+  console.log("✗ Aucune IP trouvée, retour de 'Non disponible'");
   return "Non disponible";
 }
 
