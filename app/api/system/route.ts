@@ -418,6 +418,7 @@ function getHostArch(): string {
 }
 
 // Fonction pour exécuter une commande dans l'espace de noms de l'hôte avec nsenter
+// Note: nsenter nécessite des permissions root, donc cette méthode peut échouer
 function execInHostNamespace(command: string): string | null {
   try {
     // Vérifier si /proc/1 existe (nécessaire pour --pid host)
@@ -438,16 +439,16 @@ function execInHostNamespace(command: string): string | null {
     // --target 1: PID 1 de l'hôte (accessible avec --pid host)
     // --mount: entrer dans le namespace mount
     // --uts: entrer dans le namespace UTS (hostname)
-    // --ipc: entrer dans le namespace IPC
     // --net: entrer dans le namespace réseau
+    // Note: On omet --ipc car il nécessite des permissions root
     const result = execSync(
-      `nsenter --target 1 --mount --uts --ipc --net -- sh -c "${command.replace(/"/g, '\\"').replace(/\$/g, '\\$')}"`,
+      `nsenter --target 1 --mount --uts --net -- sh -c "${command.replace(/"/g, '\\"').replace(/\$/g, '\\$')}"`,
       { encoding: "utf-8", timeout: 3000, stdio: "pipe" }
     );
     
     return result.trim();
   } catch (error: any) {
-    console.log(`  nsenter error: ${error.message}`);
+    console.log(`  nsenter error (peut nécessiter root): ${error.message}`);
     return null;
   }
 }
@@ -516,6 +517,7 @@ function getHostIP(): string {
     
     // Méthode 0.5: Lire depuis /sys/class/net pour trouver les interfaces et leurs IPs
     // Cette méthode fonctionne sur tous les systèmes Linux
+    console.log("Méthode 0.5: Lecture de /sys/class/net");
     try {
       // Essayer d'abord avec /proc/1/root (si --pid host)
       let netDir = "/proc/1/root/sys/class/net";
@@ -526,47 +528,72 @@ function getHostIP(): string {
       
       if (fs.existsSync(netDir)) {
         const interfaces = fs.readdirSync(netDir);
-        console.log(`Found network interfaces: ${interfaces.join(", ")}`);
+        console.log(`  Interfaces trouvées: ${interfaces.join(", ")}`);
         
+        // Pour chaque interface non-loopback, chercher son IP
         for (const iface of interfaces) {
           if (iface === "lo") continue; // Ignorer loopback
           
-          // Chercher l'IP de cette interface dans /proc/net/fib_trie ou /proc/net/route
-          // On va utiliser les méthodes suivantes pour trouver l'IP
+          // Lire l'adresse MAC de l'interface
+          const macFile = `${netDir}/${iface}/address`;
+          if (fs.existsSync(macFile)) {
+            try {
+              const mac = fs.readFileSync(macFile, "utf-8").trim();
+              console.log(`  Interface ${iface}, MAC: ${mac}`);
+              
+              // Chercher l'IP de cette interface dans /proc/net/arp en utilisant le MAC
+              // ou dans /proc/net/fib_trie en utilisant le nom de l'interface
+            } catch (e: any) {
+              console.log(`  Erreur lecture MAC pour ${iface}: ${e.message}`);
+            }
+          }
         }
       }
     } catch (e: any) {
-      console.log(`Reading /sys/class/net failed: ${e.message}`);
+      console.log(`  Reading /sys/class/net failed: ${e.message}`);
     }
     
     // Méthode 1: Lire depuis /proc/net/fib_trie (contient toutes les IPs locales)
+    // Note: fib_trie peut contenir beaucoup d'IPs, on doit bien filtrer
     console.log("Méthode 1: Lecture de /proc/net/fib_trie");
     let fibTrie = readHostFile("/proc/net/fib_trie", () => "");
     console.log(`fib_trie length: ${fibTrie ? fibTrie.length : 0}`);
     
     if (fibTrie && fibTrie.length > 0) {
       // Parser fib_trie pour trouver les IPs locales
-      // Chercher les lignes avec "LOCAL" qui indiquent les IPs locales
+      // Le format de fib_trie est complexe, on cherche les IPs qui ne sont pas dans la plage 127.x.x.x
       const lines = fibTrie.split("\n");
       const localIPs: string[] = [];
       
-      // Chercher toutes les IPs dans le fichier (pas seulement celles avec LOCAL)
+      // Chercher toutes les IPs dans le fichier, mais filtrer intelligemment
+      // fib_trie contient des plages d'IPs, on cherche les IPs individuelles
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         
         // Chercher toutes les IPs dans chaque ligne
-        const ipMatches = line.matchAll(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/g);
+        const ipMatches = Array.from(line.matchAll(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/g));
         for (const match of ipMatches) {
           const ip = match[1];
-          // Filtrer les IPs invalides
-          if (ip !== "127.0.0.1" && ip !== "0.0.0.0") {
-            // Filtrer les IPs Docker (172.16.0.0/12)
-            const ipParts = ip.split(".");
+          const ipParts = ip.split(".");
+          
+          // Vérifier que c'est une IP valide
+          if (ipParts.length === 4 && ipParts.every(part => {
+            const num = parseInt(part);
+            return !isNaN(num) && num >= 0 && num <= 255;
+          })) {
             const firstOctet = parseInt(ipParts[0]);
             const secondOctet = parseInt(ipParts[1]);
+            
+            // Filtrer les IPs invalides :
+            // - 127.x.x.x (loopback - TOUTE la plage)
+            // - 0.0.0.0 (non-routable)
+            // - 255.255.255.255 (broadcast)
+            // - 172.16.x.x - 172.31.x.x (Docker)
+            const isLoopback = firstOctet === 127;
+            const isNonRoutable = ip === "0.0.0.0" || ip === "255.255.255.255";
             const isDockerIP = firstOctet === 172 && secondOctet >= 16 && secondOctet <= 31;
             
-            if (!isDockerIP && !localIPs.includes(ip)) {
+            if (!isLoopback && !isNonRoutable && !isDockerIP && !localIPs.includes(ip)) {
               localIPs.push(ip);
               console.log(`  Trouvé IP dans fib_trie: ${ip}`);
             }
@@ -585,7 +612,11 @@ function getHostIP(): string {
         console.log(`✓ IP depuis fib_trie: ${localIPs[0]}`);
         return localIPs[0];
       } else {
-        console.log("  Aucune IP valide trouvée dans fib_trie");
+        console.log("  Aucune IP valide trouvée dans fib_trie (seulement loopback/Docker)");
+        // Afficher un échantillon pour déboguer
+        if (fibTrie.length > 0) {
+          console.log(`  Échantillon fib_trie (premières 300 chars): ${fibTrie.substring(0, 300)}`);
+        }
       }
     } else {
       console.log("  fib_trie est vide ou inaccessible");
@@ -598,49 +629,128 @@ function getHostIP(): string {
     
     if (route && route.length > 0) {
       const lines = route.split("\n");
-      // Chercher la première interface non-loopback avec une route par défaut
+      console.log(`Nombre de lignes dans route: ${lines.length}`);
+      
+      // Format de /proc/net/route:
+      // Iface   Destination     Gateway         Flags   RefCnt  Use     Metric  Mask            MTU     Window  IRTT
+      // eth0    00000000        010AA800        ...     ...     ...     ...     ...             ...     ...     ...
+      // 
+      // Colonnes: 0=Iface, 1=Destination, 2=Gateway, 3=Flags, 4=RefCnt, 5=Use, 6=Metric, 7=Mask, 8=MTU, 9=Window, 10=IRTT
+      // L'IP source n'est pas directement dans ce fichier, mais on peut trouver l'interface principale
+      
+      // Étape 1: Trouver l'interface principale (celle avec la route par défaut)
+      let mainInterface: string | null = null;
       for (let i = 1; i < lines.length; i++) {
         const parts = lines[i].trim().split(/\s+/);
-        if (parts.length >= 4) {
+        if (parts.length >= 3) {
           const iface = parts[0];
           const dest = parts[1];
-          const sourceHex = parts[2]; // IP source en hexadécimal
           
-          // Ignorer loopback et chercher la route par défaut
+          // Chercher la route par défaut (dest = 00000000) sur une interface non-loopback
           if (iface && iface !== "lo" && dest === "00000000") {
-            console.log(`Found default route interface: ${iface}, source hex: ${sourceHex}`);
-            
-            // Convertir l'IP source de hexadécimal à décimal
-            if (sourceHex && sourceHex.length === 8) {
-              try {
-                const ip = [
-                  parseInt(sourceHex.substring(6, 8), 16),
-                  parseInt(sourceHex.substring(4, 6), 16),
-                  parseInt(sourceHex.substring(2, 4), 16),
-                  parseInt(sourceHex.substring(0, 2), 16),
-                ].join(".");
-                
-                if (ip !== "0.0.0.0" && ip !== "127.0.0.1" && !ip.startsWith("172.17.") && !ip.startsWith("172.18.") && !ip.startsWith("172.19.")) {
-                  console.log(`✓ IP depuis route (source): ${ip}`);
-                  return ip;
+            mainInterface = iface;
+            console.log(`  ✓ Interface principale trouvée: ${mainInterface}`);
+            break;
+          }
+        }
+      }
+      
+        // Étape 2: Si on a trouvé une interface principale, chercher son IP
+        if (mainInterface) {
+          // Méthode 2.1: Chercher l'IP de cette interface dans /proc/net/arp
+          // ARP contient les IPs des interfaces avec leur device
+          console.log(`  Cherchant l'IP de ${mainInterface} dans ARP...`);
+          const arpForInterface = readHostFile("/proc/net/arp", () => "");
+          if (arpForInterface && arpForInterface.length > 0) {
+            const arpLines = arpForInterface.split("\n");
+            for (let j = 1; j < arpLines.length; j++) {
+              const arpParts = arpLines[j].trim().split(/\s+/);
+              if (arpParts.length >= 6 && arpParts[5] === mainInterface) {
+                const arpIP = arpParts[0];
+                if (arpIP && arpIP.match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/)) {
+                  const ipParts = arpIP.split(".");
+                  const firstOctet = parseInt(ipParts[0]);
+                  const secondOctet = parseInt(ipParts[1]);
+                  const isDockerIP = firstOctet === 172 && secondOctet >= 16 && secondOctet <= 31;
+                  
+                  if (arpIP !== "127.0.0.1" && arpIP !== "0.0.0.0" && !isDockerIP) {
+                    console.log(`✓ IP depuis ARP pour ${mainInterface}: ${arpIP}`);
+                    return arpIP;
+                  }
                 }
-              } catch (e) {
-                console.log(`Error parsing source IP: ${e}`);
               }
             }
-            
-            // Relire fib_trie si nécessaire
-            if (!fibTrie || fibTrie.length === 0) {
-              fibTrie = readHostFile("/proc/net/fib_trie", () => "");
+          }
+          
+          // Méthode 2.2: Chercher toutes les routes de cette interface pour trouver une IP source valide
+          const interfaceIPs: string[] = [];
+          for (let i = 1; i < lines.length; i++) {
+            const parts = lines[i].trim().split(/\s+/);
+            if (parts.length >= 3 && parts[0] === mainInterface) {
+              // La colonne "Gateway" (index 2) peut contenir l'IP de l'interface dans certains cas
+              // Mais généralement, on doit chercher ailleurs
+              
+              // Pour certaines routes, l'IP source peut être dans une autre colonne
+              // Essayons de lire toutes les colonnes hexadécimales
+              for (let col = 2; col < Math.min(parts.length, 8); col++) {
+                const hexValue = parts[col];
+                if (hexValue && hexValue.length === 8 && hexValue !== "00000000" && /^[0-9a-fA-F]{8}$/.test(hexValue)) {
+                  try {
+                    const ip = [
+                      parseInt(hexValue.substring(6, 8), 16),
+                      parseInt(hexValue.substring(4, 6), 16),
+                      parseInt(hexValue.substring(2, 4), 16),
+                      parseInt(hexValue.substring(0, 2), 16),
+                    ].join(".");
+                    
+                    const ipParts = ip.split(".");
+                    const firstOctet = parseInt(ipParts[0]);
+                    const secondOctet = parseInt(ipParts[1]);
+                    const isDockerIP = firstOctet === 172 && secondOctet >= 16 && secondOctet <= 31;
+                    
+                    if (ip !== "0.0.0.0" && ip !== "127.0.0.1" && !isDockerIP && !interfaceIPs.includes(ip)) {
+                      interfaceIPs.push(ip);
+                      console.log(`  Trouvé IP potentielle pour ${mainInterface}: ${ip} (colonne ${col})`);
+                    }
+                  } catch (e) {
+                    // Continuer
+                  }
+                }
+              }
             }
+          }
+          
+          if (interfaceIPs.length > 0) {
+            // Préférer les IPs privées
+            const privateIP = interfaceIPs.find(ip => ip.startsWith("192.168.") || ip.startsWith("10."));
+            if (privateIP) {
+              console.log(`✓ IP depuis route (toutes routes de ${mainInterface}): ${privateIP}`);
+              return privateIP;
+            }
+            console.log(`✓ IP depuis route (toutes routes de ${mainInterface}): ${interfaceIPs[0]}`);
+            return interfaceIPs[0];
+          }
+          
+          // Méthode 2.3: Chercher l'IP de cette interface dans fib_trie
+          if (!fibTrie || fibTrie.length === 0) {
+            fibTrie = readHostFile("/proc/net/fib_trie", () => "");
+          }
+          
+          if (fibTrie && fibTrie.length > 0) {
+            // Chercher toutes les occurrences de cette interface dans fib_trie
+            const ifaceLines = fibTrie.split("\n").filter(line => line.includes(mainInterface));
+            console.log(`  Lignes avec ${mainInterface} dans fib_trie: ${ifaceLines.length}`);
             
-            // Essayer de trouver l'IP de cette interface dans /proc/net/fib_trie
-            if (fibTrie && fibTrie.length > 0) {
-              const ifacePattern = new RegExp(`${iface}.*?(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3})`, 'i');
-              const match = fibTrie.match(ifacePattern);
-              if (match && match[1]) {
+            for (const ifaceLine of ifaceLines) {
+              const ipMatches = Array.from(ifaceLine.matchAll(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/g));
+              for (const match of ipMatches) {
                 const ip = match[1];
-                if (ip !== "127.0.0.1" && ip !== "0.0.0.0" && !ip.startsWith("172.17.") && !ip.startsWith("172.18.") && !ip.startsWith("172.19.")) {
+                const ipParts = ip.split(".");
+                const firstOctet = parseInt(ipParts[0]);
+                const secondOctet = parseInt(ipParts[1]);
+                const isDockerIP = firstOctet === 172 && secondOctet >= 16 && secondOctet <= 31;
+                
+                if (ip !== "127.0.0.1" && ip !== "0.0.0.0" && !isDockerIP && !ip.startsWith("127.")) {
                   console.log(`✓ IP depuis route + fib_trie: ${ip}`);
                   return ip;
                 }
@@ -648,20 +758,28 @@ function getHostIP(): string {
             }
           }
         }
-      }
     }
     
     // Méthode 3: Lire depuis /proc/net/arp (contient les IPs des interfaces)
-    // Note: ARP peut ne pas contenir toutes les IPs, mais c'est une bonne source de fallback
+    // Note: ARP contient les IPs des interfaces locales et des machines sur le réseau
+    console.log("Méthode 3: Lecture de /proc/net/arp");
     const arp = readHostFile("/proc/net/arp", () => "");
+    console.log(`arp length: ${arp ? arp.length : 0}`);
+    
     if (arp && arp.length > 0) {
       const lines = arp.split("\n");
       const arpIPs: string[] = [];
+      
+      // Format de /proc/net/arp:
+      // IP address       HW type     Flags       HW address            Mask     Device
+      // 192.168.0.19     0x1         0x2         aa:bb:cc:dd:ee:ff     *        eth0
       
       for (let i = 1; i < lines.length; i++) {
         const parts = lines[i].trim().split(/\s+/);
         if (parts.length >= 1) {
           const ip = parts[0];
+          const device = parts.length >= 6 ? parts[5] : "";
+          
           // Vérifier que c'est une IP valide et non loopback/Docker
           if (ip && ip.match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/) && 
               ip !== "127.0.0.1" && ip !== "0.0.0.0") {
@@ -673,6 +791,7 @@ function getHostIP(): string {
             
             if (!isDockerIP) {
               arpIPs.push(ip);
+              console.log(`  Trouvé IP dans ARP: ${ip} (device: ${device})`);
             }
           }
         }
@@ -682,12 +801,16 @@ function getHostIP(): string {
         // Préférer les IPs privées
         const privateIP = arpIPs.find(ip => ip.startsWith("192.168.") || ip.startsWith("10."));
         if (privateIP) {
-          console.log(`✓ IP depuis ARP: ${privateIP}`);
+          console.log(`✓ IP depuis ARP (privée): ${privateIP}`);
           return privateIP;
         }
         console.log(`✓ IP depuis ARP: ${arpIPs[0]}`);
         return arpIPs[0];
+      } else {
+        console.log("  Aucune IP valide trouvée dans ARP");
       }
+    } else {
+      console.log("  ARP est vide ou inaccessible");
     }
   } catch (error: any) {
     console.log(`Erreur lors de la récupération de l'IP: ${error.message}`);
