@@ -17,8 +17,7 @@ COPY . .
 
 # Build de l'application Next.js
 RUN pnpm run build && \
-    pnpm store prune && \
-    rm -rf /root/.local/share/pnpm/store
+    rm -rf /root/.local/share/pnpm/store 2>/dev/null || true
 
 # Stage 2: Production
 FROM node:22-alpine AS runner
@@ -43,8 +42,7 @@ COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 # Utiliser --no-store-dir pour éviter de stocker dans le store global
 # et nettoyer le cache après installation
 RUN pnpm install --prod --frozen-lockfile --no-store-dir && \
-    pnpm store prune && \
-    rm -rf /root/.local/share/pnpm/store && \
+    rm -rf /root/.local/share/pnpm/store 2>/dev/null || true && \
     rm -rf /tmp/*
 
 USER nextjs
