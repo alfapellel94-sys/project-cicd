@@ -80,15 +80,12 @@ jobs:
         shell: bash
         run: |
           set -eo pipefail
-          # # Créer le dossier SSH et configurer la clé privée
-          # mkdir -p ~/.ssh
-          # echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
-          # chmod 600 ~/.ssh/deploy_key
 
-          # -i ~/.ssh/deploy_key
+          # Installer sshpass pour l'authentification par mot de passe
+          sudo apt-get update && sudo apt-get install -y sshpass
 
-          # Se connecter au serveur via SSH et exécuter les commandes de déploiement
-          ssh -o StrictHostKeyChecking=no -p ${{ secrets.SSH_PORT }} ${{ secrets.REMOTE_USER }}@${{ secrets.REMOTE_HOST }} << EOF
+          # Se connecter au serveur via SSH avec mot de passe et exécuter les commandes de déploiement
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no -p ${{ secrets.SSH_PORT }} ${{ secrets.REMOTE_USER }}@${{ secrets.REMOTE_HOST }} << EOF
             CONTAINER_NAME="${{ github.event.repository.name }}"
             IMAGE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
             
