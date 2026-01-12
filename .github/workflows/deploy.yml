@@ -79,7 +79,7 @@ jobs:
         if: needs.build-image.result == 'success'
         shell: bash
         run: |
-          set -eio pipefail
+          set -eo pipefail
           # # Créer le dossier SSH et configurer la clé privée
           # mkdir -p ~/.ssh
           # echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
