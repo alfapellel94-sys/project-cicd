@@ -76,7 +76,7 @@ Cette application est idéale pour :
 ## 📁 Structure du Projet
 
 ```
-santu-hub-cicd-example/
+santu-hub-cicd/
 ├── app/
 │   ├── layout.tsx      # Layout principal de l'application
 │   ├── page.tsx         # Page d'accueil avec les infos système

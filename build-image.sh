@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Script pour construire et publier l'image Docker de santu-hub-cicd-example
+# Script pour construire et publier l'image Docker de santu-hub-cicd
 
 # *************************** VARIABLES  ****************************
 # Définir les variables

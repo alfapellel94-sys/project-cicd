@@ -310,7 +310,7 @@ echo ""
 
 #### USAGE EXAMPLE ####
 # Télécharger le script:
-# curl -fsSL -o createTempUsers.sh https://raw.githubusercontent.com/aboubacar3012/santu-hub-cicd-example/main/public/createTempUsers.sh
+# curl -fsSL -o createTempUsers.sh https://raw.githubusercontent.com/aboubacar3012/santu-hub-cicd/main/public/createTempUsers.sh
 # chmod +x createTempUsers.sh
 #
 # Créer les 15 utilisateurs DevOps:

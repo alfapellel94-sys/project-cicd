@@ -9,7 +9,7 @@ on:
 # Variables d'environnement partagées par tous les jobs
 env:
   REGISTRY: ghcr.io # GitHub Container Registry - où sont stockées nos images Docker
-  IMAGE_NAME: ${{ github.repository }} # Nom du repository GitHub (ex: aboubacar3012/santu-hub-cicd-example)
+  IMAGE_NAME: ${{ github.repository }} # Nom du repository GitHub (ex: aboubacar3012/santu-hub-cicd)
 
 jobs:
   # Construction et publication de l'image Docker sur GitHub Container Registry
