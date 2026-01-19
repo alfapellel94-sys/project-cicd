@@ -121,21 +121,21 @@ create_devops_users() {
     
     # Définir les utilisateurs et leurs mots de passe
     declare -A DEVOPS_USERS=(
-        ["devops-user-01"]="DevOps2024!01"
-        ["devops-user-02"]="DevOps2024!02"
-        ["devops-user-03"]="DevOps2024!03"
-        ["devops-user-04"]="DevOps2024!04"
-        ["devops-user-05"]="DevOps2024!05"
-        ["devops-user-06"]="DevOps2024!06"
-        ["devops-user-07"]="DevOps2024!07"
-        ["devops-user-08"]="DevOps2024!08"
-        ["devops-user-09"]="DevOps2024!09"
-        ["devops-user-10"]="DevOps2024!10"
-        ["devops-user-11"]="DevOps2024!11"
-        ["devops-user-12"]="DevOps2024!12"
-        ["devops-user-13"]="DevOps2024!13"
-        ["devops-user-14"]="DevOps2024!14"
-        ["devops-user-15"]="DevOps2024!15"
+        ["devops-user-01"]="DevOps2026!01"
+        ["devops-user-02"]="DevOps2026!02"
+        ["devops-user-03"]="DevOps2026!03"
+        ["devops-user-04"]="DevOps2026!04"
+        ["devops-user-05"]="DevOps2026!05"
+        ["devops-user-06"]="DevOps2026!06"
+        ["devops-user-07"]="DevOps2026!07"
+        ["devops-user-08"]="DevOps2026!08"
+        ["devops-user-09"]="DevOps2026!09"
+        ["devops-user-10"]="DevOps2026!10"
+        ["devops-user-11"]="DevOps2026!11"
+        ["devops-user-12"]="DevOps2026!12"
+        ["devops-user-13"]="DevOps2026!13"
+        ["devops-user-14"]="DevOps2026!14"
+        ["devops-user-15"]="DevOps2026!15"
     )
     
     for USERNAME in "${!DEVOPS_USERS[@]}"; do
