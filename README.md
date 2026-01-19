@@ -116,14 +116,8 @@ docker build -t santu-hub-cicd:latest .
 # Lancer le conteneur avec --pid host et les volumes montés
 docker run -d \
   --name santu-hub-cicd \
-  --hostname $(hostname) \
   --restart unless-stopped \
-  --privileged \
-  --pid host \
   -p 3000:3000 \
-  -v /proc:/host/proc:ro \
-  -v /sys:/host/sys:ro \
-  -v /etc:/host/etc:ro \
   santu-hub-cicd:latest
 ```
 
