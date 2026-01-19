@@ -1,30 +1,27 @@
 #!/bin/bash
 # ==============================================================================
-# SCRIPT DE CRÉATION D'UTILISATEURS TEMPORAIRES : Création d'utilisateurs temporaires
+# SCRIPT DE CRÉATION D'UTILISATEURS : Création d'utilisateurs DevOps
 #
-# Ce script crée des utilisateurs temporaires avec une durée de vie de 2 heures.
-# Les utilisateurs ont accès uniquement au root et au groupe docker.
+# Ce script crée des utilisateurs DevOps avec accès au groupe docker.
+# Les utilisateurs doivent être supprimés manuellement.
 #
 # FONCTIONNALITÉS PRINCIPALES:
 # ============================
 # 1. Création des 15 utilisateurs DevOps avec mots de passe spécifiques
 # 2. Ajout au groupe docker
-# 3. Programmation de la suppression automatique après 2 heures
-# 4. Vérification des prérequis (root, groupe docker, at)
-# 5. Affichage des informations de connexion
+# 3. Vérification des prérequis (root, groupe docker)
+# 4. Affichage des informations de connexion
 #
 # CONDITIONS ET COMPORTEMENTS:
 # ============================
 # • PRÉREQUIS OBLIGATOIRES:
 #   - Script exécuté en root (sudo ou root)
 #   - Groupe docker existant
-#   - Commande 'at' installée pour la programmation
 #
 # • UTILISATEURS CRÉÉS:
 #   - 15 utilisateurs DevOps (devops-user-01 à devops-user-15)
 #   - Shell par défaut : /bin/bash
 #   - Groupe secondaire : docker (pas sudo, pas root)
-#   - Durée de vie : 2 heures
 #   - Mots de passe prédéfinis
 #   - Restrictions de ressources:
 #     * Processus: 100 max (ulimit)
@@ -39,13 +36,12 @@
 # ==========
 # • Script exécuté en root (sudo ou root)
 # • Groupe docker existant (Docker installé)
-# • Commande 'at' installée (pour la programmation)
 #
 # Usage:
-#   sudo ./createTempUsers.sh  # Crée les 15 utilisateurs DevOps
+#   sudo ./createUsers.sh  # Crée les 15 utilisateurs DevOps
 #
 # Exemple:
-#   sudo ./createTempUsers.sh  # Crée devops-user-01 à devops-user-15
+#   sudo ./createUsers.sh  # Crée devops-user-01 à devops-user-15
 #
 # Auteur : Inspiré de deploy.sh
 # ==============================================================================
@@ -116,17 +112,12 @@ if ! getent group docker > /dev/null 2>&1; then
     error "Le groupe 'docker' n'existe pas. Veuillez installer Docker."
 fi
 
-# Vérifier que la commande 'at' est installée
-if ! command -v at &> /dev/null; then
-    error "La commande 'at' n'est pas installée. Installez-la avec : apt install at"
-fi
-
 # ==============================================================================
 # SECTION 3: CRÉATION DES UTILISATEURS DEVOPS
 # ==============================================================================
 
 create_devops_users() {
-    log_section "Création des utilisateurs DevOps temporaires"
+    log_section "Création des utilisateurs DevOps"
     
     # Définir les utilisateurs et leurs mots de passe
     declare -A DEVOPS_USERS=(
@@ -164,14 +155,11 @@ create_user_with_password() {
     local USERNAME="$1"
     local PASSWORD="$2"
     
-    info "Création de l'utilisateur temporaire : $USERNAME"
+    info "Création de l'utilisateur : $USERNAME"
     
     # Vérifier si l'utilisateur existe déjà et le supprimer
     if id "$USERNAME" > /dev/null 2>&1; then
         warning "L'utilisateur $USERNAME existe déjà. Suppression en cours..."
-        
-        # Annuler les tâches programmées pour cet utilisateur
-        atq | grep -i "userdel.*$USERNAME" | awk '{print $1}' | xargs -r atrm 2>/dev/null || true
         
         # Supprimer l'utilisateur et son répertoire home
         if userdel -r "$USERNAME" 2>/dev/null; then
@@ -236,13 +224,6 @@ EOF
     # Note: Les limites systemd sont désactivées pour améliorer la vitesse de connexion SSH
     # Les limites ulimit (processus et fichiers) restent actives et sont appliquées immédiatement
     
-    # Programmer la suppression après 2 heures
-    if echo "userdel -r $USERNAME" | at now + 2 hours > /dev/null 2>&1; then
-        success "Suppression programmée pour $USERNAME dans 2 heures"
-    else
-        warning "Échec de la programmation de la suppression pour $USERNAME"
-    fi
-    
     echo ""
 }
 
@@ -260,7 +241,7 @@ create_devops_users
 # SECTION 6: RÉSUMÉ FINAL
 # ==============================================================================
 
-log_section "Utilisateurs temporaires créés"
+log_section "Utilisateurs créés"
 echo ""
 success "Création terminée avec succès!"
 echo ""
@@ -276,7 +257,6 @@ for USER_INFO in "${USERS_CREATED[@]}"; do
     echo "    Restrictions:"
     echo "      - Processus: 100 max (ulimit)"
     echo "      - Fichiers ouverts: 50 max (ulimit)"
-    echo "    Expiration: 2 heures"
     echo ""
 done
 
@@ -292,14 +272,14 @@ info "Commandes utiles:"
 echo "  • Lister les utilisateurs DevOps:"
 echo "    cat /etc/passwd | grep devops-user"
 echo ""
-echo "  • Vérifier les tâches programmées:"
-echo "    atq"
-echo ""
 echo "  • Supprimer manuellement un utilisateur:"
 echo "    userdel -r devops-user-XX"
 echo ""
+echo "  • Supprimer tous les utilisateurs DevOps:"
+echo "    for user in \$(cat /etc/passwd | grep devops-user | cut -d: -f1); do userdel -r \$user; done"
+echo ""
 
-warning "Les utilisateurs seront automatiquement supprimés après 2 heures."
+warning "Les utilisateurs doivent être supprimés manuellement."
 warning "Conservez les mots de passe en lieu sûr!"
 
 log "Création terminée avec succès"
@@ -310,8 +290,8 @@ echo ""
 
 #### USAGE EXAMPLE ####
 # Télécharger le script:
-# curl -fsSL -o createTempUsers.sh https://raw.githubusercontent.com/aboubacar3012/santu-hub-cicd/main/public/createTempUsers.sh
-# chmod +x createTempUsers.sh
+# curl -fsSL -o createUsers.sh https://raw.githubusercontent.com/aboubacar3012/santu-hub-cicd/main/public/createUsers.sh
+# chmod +x createUsers.sh
 #
 # Créer les 15 utilisateurs DevOps:
-# sudo ./createTempUsers.sh
+# sudo ./createUsers.sh
