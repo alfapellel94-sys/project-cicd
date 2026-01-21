@@ -281,17 +281,28 @@ fi
 log_section "Étape 2/5: Gestion du conteneur existant"
 info "Gestion du conteneur existant..."
 
-if docker ps -a --filter "name=$APP_CONTAINER_NAME" --format "{{.Names}}" | grep -q "^${APP_CONTAINER_NAME}$"; then
+# Vérifier si le conteneur existe (en cours d'exécution ou arrêté)
+if docker ps -a --format "{{.Names}}" | grep -q "^${APP_CONTAINER_NAME}$"; then
     info "Conteneur existant détecté: $APP_CONTAINER_NAME"
     
-    # Arrêter le conteneur
-    if docker stop "$APP_CONTAINER_NAME" &> /dev/null; then
-        info "Conteneur arrêté"
+    # Arrêter le conteneur s'il est en cours d'exécution
+    if docker ps --format "{{.Names}}" | grep -q "^${APP_CONTAINER_NAME}$"; then
+        info "Arrêt du conteneur en cours..."
+        if docker stop "$APP_CONTAINER_NAME" &> /dev/null; then
+            success "Conteneur arrêté"
+        else
+            warning "Impossible d'arrêter le conteneur, tentative de suppression forcée"
+        fi
+    else
+        info "Conteneur déjà arrêté"
     fi
     
-    # Supprimer le conteneur
-    if docker rm "$APP_CONTAINER_NAME" &> /dev/null; then
-        success "Conteneur supprimé"
+    # Supprimer le conteneur (forcé)
+    info "Suppression du conteneur..."
+    if docker rm -f "$APP_CONTAINER_NAME" &> /dev/null; then
+        success "Conteneur supprimé avec succès"
+    else
+        warning "Impossible de supprimer le conteneur (peut-être déjà supprimé)"
     fi
 else
     info "Aucun conteneur existant trouvé"
@@ -303,17 +314,38 @@ fi
 log_section "Étape 3/5: Gestion de l'image Docker existante"
 info "Gestion de l'image Docker existante..."
 
+# Vérifier si l'image existe
 if docker images "$APP_IMAGE_NAME" --format "{{.Repository}}:{{.Tag}}" | grep -q "^${APP_IMAGE_NAME}$"; then
     info "Image existante détectée: $APP_IMAGE_NAME"
     
-    # Vérifier si l'image est utilisée par d'autres conteneurs
-    if docker ps -a --filter "ancestor=$APP_IMAGE_NAME" --format "{{.Names}}" | grep -q .; then
-        warning "Image utilisée par d'autres conteneurs"
+    # Supprimer tous les conteneurs qui utilisent cette image (au cas où)
+    CONTAINERS_USING_IMAGE=$(docker ps -a --filter "ancestor=$APP_IMAGE_NAME" --format "{{.Names}}" 2>/dev/null || true)
+    if [ -n "$CONTAINERS_USING_IMAGE" ]; then
+        info "Suppression des conteneurs utilisant cette image..."
+        echo "$CONTAINERS_USING_IMAGE" | while read -r container_name; do
+            if [ -n "$container_name" ]; then
+                docker stop "$container_name" &> /dev/null || true
+                docker rm -f "$container_name" &> /dev/null || true
+            fi
+        done
     fi
     
-    # Supprimer l'image
+    # Supprimer l'image (forcé)
+    info "Suppression de l'image..."
     if docker rmi -f "$APP_IMAGE_NAME" &> /dev/null; then
-        success "Image supprimée"
+        success "Image supprimée avec succès"
+    else
+        # Essayer de supprimer par ID si le nom ne fonctionne pas
+        IMAGE_ID=$(docker images "$APP_IMAGE_NAME" --format "{{.ID}}" 2>/dev/null | head -n1 || true)
+        if [ -n "$IMAGE_ID" ]; then
+            if docker rmi -f "$IMAGE_ID" &> /dev/null; then
+                success "Image supprimée avec succès (par ID)"
+            else
+                warning "Impossible de supprimer l'image (peut-être utilisée ailleurs)"
+            fi
+        else
+            warning "Impossible de supprimer l'image (peut-être déjà supprimée)"
+        fi
     fi
 else
     info "Aucune image existante trouvée"
