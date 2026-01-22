@@ -42,7 +42,7 @@ name: Deploy Santu Hub CICD
 
 # Déclenchement manuel uniquement
 on:
-  # workflow_dispatch:
+  workflow_dispatch:
 
 # Variables d'environnement partagées par tous les jobs
 env:
