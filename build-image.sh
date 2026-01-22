@@ -44,7 +44,7 @@
 # Définir les variables
 IMAGE_NAME="santu-hub-cicd"
 REGISTRY="ghcr.io"
-REPO="${github_account}/santu-hub-cicd"
+REPO="alfapellel94-sys/project-cicd"
 # Format de date JJ-MM-AA-HH-MM
 DATE_FORMAT=$(LC_TIME=fr_FR.UTF-8 TZ=Europe/Paris date +"%a_%d_%B_%Y_%Hh%M")
 
